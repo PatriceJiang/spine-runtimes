@@ -36,7 +36,7 @@
 #include <spine/spine-cocos2dx.h>
 #include <spine/Debug.h>
 #include "AppMacros.h"
-
+#include "CoinExample.h"
 USING_NS_CC;
 using namespace std;
 
@@ -72,10 +72,12 @@ bool AppDelegate::applicationDidFinishLaunching () {
 	glview->setDesignResolutionSize(designResolutionSize.width, designResolutionSize.height, ResolutionPolicy::NO_BORDER);
 #endif
 
-	cocos2d::Size frameSize = glview->getFrameSize();
-	
-	vector<string> searchPath;
+    vector<string> searchPath;
 
+#if 0
+	cocos2d::Size frameSize = glview->getFrameSize
+	
+	
 	// In this demo, we select resource according to the frame's height.
 	// If the resource size is different from design resolution size, you need to set contentScaleFactor.
 	// We use the ratio of resource's height to the height of design resolution,
@@ -93,14 +95,17 @@ bool AppDelegate::applicationDidFinishLaunching () {
 		searchPath.push_back(smallResource.directory);
 		director->setContentScaleFactor(MIN(smallResource.size.height/designResolutionSize.height, smallResource.size.width/designResolutionSize.width));
 	}
-	
+#else
+    auto winSize = Director::getInstance()->getWinSize();
+
+#endif
 	searchPath.push_back("common");
 	 
 	// set search path
 	FileUtils::getInstance()->setSearchPaths(searchPath);
 	
 	// turn on display FPS
-	director->setDisplayStats(true);
+	//director->setDisplayStats(true);
 
 	// set FPS. the default value is 1.0/60 if you don't call this
 	director->setAnimationInterval(1.0f / 60);
@@ -110,10 +115,29 @@ bool AppDelegate::applicationDidFinishLaunching () {
 	
 	// create a scene. it's an autorelease object
 	//auto scene = RaptorExample::scene();
-	auto scene = IKExample::scene();
+	//auto scene = IKExample::scene();
+#if 0
+    auto scene = CoinExample::scene();
+
+    //scene->setPosition(frameSize.width * 0.5, frameSize.height * 0.5);
 
 	// run
 	director->runWithScene(scene);
+#else
+    auto skeletonNode = SkeletonAnimation::createWithBinaryFile("coin-pro.skel", "coin.atlas", 1);
+    skeletonNode->setAnimation(0, "animation", true);
+
+    skeletonNode->setPosition(Vec2(winSize.width / 2, winSize.height / 2));
+    Scene* scene = Scene::create();
+    scene->addChild(skeletonNode);
+
+    director->runWithScene(scene);
+
+    cocos2d::Sprite* sprite = Sprite::create("Icon.png");
+    sprite->setPosition(Vec2(winSize.width / 4, winSize.height * 3/ 4));
+    scene->addChild(sprite);
+
+#endif
 
 	return true;
 }

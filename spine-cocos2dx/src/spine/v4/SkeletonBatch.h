@@ -36,10 +36,20 @@
 #include <spine/spine.h>
 #include <vector>
 
+#define SPINE_USE_CUSTOM_COMMAND 0
+#define SPINE_RELOAD_VERTEX 1
+#define SPINE_ADVOID_RECREATE_BUFFER 0
 namespace spine {
     
     class SkeletonBatch {
     public:
+
+#if SPINE_USE_CUSTOM_COMMAND
+        typedef cocos2d::CustomCommand BatchCommand;
+#else
+        typedef cocos2d::TrianglesCommand BatchCommand;
+#endif
+
         static SkeletonBatch* getInstance ();
         
         static void destroyInstance ();
@@ -50,7 +60,7 @@ namespace spine {
 		void deallocateVertices(uint32_t numVertices);
 		unsigned short* allocateIndices(uint32_t numIndices);
 		void deallocateIndices(uint32_t numVertices);
-		cocos2d::TrianglesCommand* addCommand(cocos2d::Renderer* renderer, float globalOrder, cocos2d::Texture2D* texture, cocos2d::BlendFunc blendType, const cocos2d::TrianglesCommand::Triangles& triangles, const cocos2d::Mat4& mv, uint32_t flags);
+        BatchCommand* addCommand(cocos2d::Renderer* renderer, float globalOrder, cocos2d::Texture2D* texture, cocos2d::BlendFunc blendType, const cocos2d::TrianglesCommand::Triangles& triangles, const cocos2d::Mat4& mv, uint32_t flags);
         
     protected:
         SkeletonBatch ();
@@ -58,15 +68,16 @@ namespace spine {
 		
 		void reset ();
 		
-		cocos2d::TrianglesCommand* nextFreeCommand ();
+        BatchCommand* nextFreeCommand ();
 
-        cocos2d::TrianglesCommand* createNewTrianglesCommand();
+        BatchCommand* createNewTrianglesCommand();
         std::shared_ptr<cocos2d::backend::ProgramState>     _programState = nullptr;
+        //cocos2d::backend::ProgramState     *_programState = nullptr;
         cocos2d::backend::UniformLocation                   _locMVP;
         cocos2d::backend::UniformLocation                   _locTexture;
 		
 		// pool of commands
-		std::vector<cocos2d::TrianglesCommand*>             _commandsPool;
+		std::vector<BatchCommand*>             _commandsPool;
 		uint32_t                                            _nextFreeCommand;
 		
 		// pool of vertices

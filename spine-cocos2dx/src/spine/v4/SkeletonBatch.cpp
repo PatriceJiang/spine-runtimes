@@ -41,6 +41,9 @@ using std::max;
 #include "renderer/ccShaders.h"
 #include "renderer/backend/Device.h"
 
+#include "renderer/backend/opengl/BufferGL.h"
+#include "renderer/backend/opengl/TextureGL.h"
+
 namespace spine {
 
 static SkeletonBatch* instance = nullptr;
@@ -59,9 +62,11 @@ void SkeletonBatch::destroyInstance () {
 
 SkeletonBatch::SkeletonBatch () {
 
-    auto program = backend::Device::getInstance()->newProgram(positionTextureColor_vert, positionTextureColor_frag);
-    _programState = std::make_shared<backend::ProgramState>(program);
-    program->autorelease();
+    //auto program = backend::Device::getInstance()->newProgram(positionTextureColor_vert, positionTextureColor_frag);
+    auto propram = backend::Program::getBuiltinProgram(cocos2d::backend::ProgramType::POSITION_TEXTURE_COLOR);
+    _programState = std::make_shared<backend::ProgramState>(propram);
+    
+    //program->autorelease();
 
     auto vertexLayout = _programState->getVertexLayout();
 
@@ -105,9 +110,16 @@ cocos2d::V3F_C4B_T2F* SkeletonBatch::allocateVertices(uint32_t numVertices) {
 		_vertices.resize((_vertices.size() + numVertices) * 2 + 1);
 		cocos2d::V3F_C4B_T2F* newData = _vertices.data();
 		for (uint32_t i = 0; i < this->_nextFreeCommand; i++) {
+#if !SPINE_USE_CUSTOM_COMMAND
 			TrianglesCommand* command = _commandsPool[i];
 			cocos2d::TrianglesCommand::Triangles& triangles = (cocos2d::TrianglesCommand::Triangles&)command->getTriangles();
 			triangles.verts = newData + (triangles.verts - oldData);
+#else
+            CustomCommand* command = _commandsPool[i];
+            auto* buffer = command->getVertexBuffer();
+            //cocos2d::V3F_C4B_T2F* current = (cocos2d::V3F_C4B_T2F *)((cocos2d::backend::BufferGL*)buffer)->getData();
+            command->updateVertexBuffer(newData, buffer->getSize());
+#endif
 		}
 	}
 
@@ -128,11 +140,22 @@ unsigned short* SkeletonBatch::allocateIndices(uint32_t numIndices) {
 		_indices.ensureCapacity(_indices.size() + numIndices);
 		unsigned short* newData = _indices.buffer();
 		for (uint32_t i = 0; i < this->_nextFreeCommand; i++) {
+#if !SPINE_USE_CUSTOM_COMMAND
 			TrianglesCommand* command = _commandsPool[i];
 			cocos2d::TrianglesCommand::Triangles& triangles = (cocos2d::TrianglesCommand::Triangles&)command->getTriangles();
 			if (triangles.indices >= oldData && triangles.indices < oldData + oldSize) {
 				triangles.indices = newData + (triangles.indices - oldData);
 			}
+#else
+            CustomCommand* command = _commandsPool[i];
+            auto* buffer = command->getIndexBuffer();
+            //unsigned short* current = (unsigned short*)((cocos2d::backend::BufferGL*)buffer)->getData();
+           // if (current >= oldData && current < oldData + oldSize) {
+            //    current = newData + (current- oldData);
+                command->updateIndexBuffer(newData, buffer->getSize());
+            //}
+
+#endif
 		}
 	}
 
@@ -146,17 +169,65 @@ void SkeletonBatch::deallocateIndices(uint32_t numIndices) {
 }
 
 
-cocos2d::TrianglesCommand* SkeletonBatch::addCommand(cocos2d::Renderer* renderer, float globalOrder, cocos2d::Texture2D* texture, cocos2d::BlendFunc blendType, const cocos2d::TrianglesCommand::Triangles& triangles, const cocos2d::Mat4& mv, uint32_t flags) {
-	TrianglesCommand* command = nextFreeCommand();
-    const cocos2d::Mat4& projectionMat = Director::getInstance()->getMatrix(MATRIX_STACK_TYPE::MATRIX_STACK_PROJECTION);    
+SkeletonBatch::BatchCommand* SkeletonBatch::addCommand(cocos2d::Renderer* renderer, float globalOrder, cocos2d::Texture2D* texture, cocos2d::BlendFunc blendType, const cocos2d::TrianglesCommand::Triangles& triangles, const cocos2d::Mat4& mv, uint32_t flags) {
+    SkeletonBatch::BatchCommand* command = nextFreeCommand();
+    const cocos2d::Mat4& projectionMat = Director::getInstance()->getMatrix(MATRIX_STACK_TYPE::MATRIX_STACK_PROJECTION);
 
     auto programState = command->getPipelineDescriptor().programState;
     CCASSERT(programState, "programState should not be null");
 
+#if SPINE_USE_CUSTOM_COMMAND
+#if SPINE_RELOAD_VERTEX
+    programState->setUniform(_locMVP, Mat4::IDENTITY.m, sizeof(Mat4::IDENTITY.m));
+#else
+    Mat4 tmp = projectionMat * mv;
+    programState->setUniform(_locMVP, tmp.m, sizeof(tmp.m));
+#endif
+#else
     programState->setUniform(_locMVP, projectionMat.m, sizeof(projectionMat.m));
+#endif
+    // programState->setUniform(_locMVP, Mat4::IDENTITY.m, sizeof(Mat4::IDENTITY.m));
     programState->setTexture(_locTexture, 0, texture->getBackendTexture());
 
+    //int slot = 3;
+    //programState->setUniform(_locTexture, &slot, sizeof(slot));
+
+    //glActiveTexture(GL_TEXTURE0 + slot);
+    //glBindTexture(GL_TEXTURE_2D, ((backend::Texture2DGL*)texture->getBackendTexture())->getHandler());
+
+
+    //for (int i = 0; i < triangles.vertCount; i++)
+    //{
+    //    auto& v = triangles.verts[i].vertices;
+    //    v.x = CCRANDOM_0_1() * 2.0 - 1.0;
+    //    v.y = CCRANDOM_0_1() * 2.0 - 1.0;
+    //}
+    //Mat4 tmp = mv;
+    //tmp.multiply(mv);
+    //auto output = projectionMat * mv;
+#if SPINE_USE_CUSTOM_COMMAND
+
+#if SPINE_ADVOID_RECREATE_BUFFER
+    if (!command->getIndexBuffer() || command->getIndexBuffer()->getSize() != triangles.indexCount * sizeof(triangles.indices[0]))
+    {
+        command->createIndexBuffer(cocos2d::CustomCommand::IndexFormat::U_SHORT, triangles.indexCount, cocos2d::CustomCommand::BufferUsage::DYNAMIC);
+    }
+    if (!command->getVertexBuffer() || command->getVertexBuffer()->getSize() != triangles.vertCount * sizeof(triangles.verts[0]))
+    {
+        command->createVertexBuffer(sizeof(triangles.verts[0]), triangles.vertCount, cocos2d::CustomCommand::BufferUsage::DYNAMIC);
+    }
+#else
+    command->createVertexBuffer(sizeof(triangles.verts[0]), triangles.vertCount, cocos2d::CustomCommand::BufferUsage::DYNAMIC);
+    command->createIndexBuffer(cocos2d::CustomCommand::IndexFormat::U_SHORT, triangles.indexCount, cocos2d::CustomCommand::BufferUsage::DYNAMIC);
+#endif
+
+    command->updateIndexBuffer(triangles.indices, triangles.indexCount * sizeof(triangles.indices[0]));
+    command->updateVertexBuffer(triangles.verts, triangles.vertCount * sizeof(triangles.verts[0]));
+
+    command->init(globalOrder,  blendType);
+#else
     command->init(globalOrder, texture, blendType, triangles, mv, flags);
+#endif
     renderer->addCommand(command);
 	return command;
 }
@@ -167,7 +238,7 @@ void SkeletonBatch::reset() {
 	_indices.setSize(0, 0);
 }
 
-cocos2d::TrianglesCommand* SkeletonBatch::nextFreeCommand() {
+SkeletonBatch::BatchCommand* SkeletonBatch::nextFreeCommand() {
     if (_commandsPool.size() <= _nextFreeCommand) {
         unsigned int newSize = _commandsPool.size() * 2 + 1;
         for (int i = _commandsPool.size(); i < newSize; i++) {
@@ -184,8 +255,9 @@ cocos2d::TrianglesCommand* SkeletonBatch::nextFreeCommand() {
     return command;
 }
 
-cocos2d::TrianglesCommand *SkeletonBatch::createNewTrianglesCommand() {
-    auto* command = new TrianglesCommand();
+SkeletonBatch::BatchCommand*SkeletonBatch::createNewTrianglesCommand() {
+    auto* command = new BatchCommand();
+    //command->setSkipBatching(true);
     return command;
 }
 }

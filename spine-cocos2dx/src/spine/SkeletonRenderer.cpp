@@ -32,6 +32,8 @@
 #include <spine/AttachmentVertices.h>
 #include <algorithm>
 
+#include "renderer/backend/opengl/BufferGL.h"
+
 USING_NS_CC;
 
 
@@ -280,7 +282,8 @@ namespace spine {
 		const float* worldCoordPtr = worldCoords;
 		SkeletonBatch* batch = SkeletonBatch::getInstance();
 		SkeletonTwoColorBatch* twoColorBatch = SkeletonTwoColorBatch::getInstance();
-		const bool hasSingleTint = (isTwoColorTint() == false);
+		//const bool hasSingleTint = (isTwoColorTint() == false);
+        const bool hasSingleTint = true;
 
 		if (_effect) {
 			_effect->begin(*_skeleton);
@@ -454,15 +457,19 @@ namespace spine {
 #if COCOS2D_VERSION < 0x00040000
 					cocos2d::TrianglesCommand* batchedTriangles = batch->addCommand(renderer, _globalZOrder, attachmentVertices->_texture, _glProgramState, blendFunc, triangles, transform, transformFlags);
 #else
-					cocos2d::TrianglesCommand* batchedTriangles = batch->addCommand(renderer, _globalZOrder, attachmentVertices->_texture, blendFunc, triangles, transform, transformFlags);
+					SkeletonBatch::BatchCommand* batchedTriangles = batch->addCommand(renderer, _globalZOrder, attachmentVertices->_texture, blendFunc, triangles, transform, transformFlags);
 #endif
 
+#if SPINE_USE_CUSTOM_COMMAND
 					const float* verts = _clipper->getClippedVertices().buffer();
 					const float* uvs = _clipper->getClippedUVs().buffer();
 					if (_effect) {
-						V3F_C4B_T2F* vertex = batchedTriangles->getTriangles().verts;
+                        auto* buffer = batchedTriangles->getVertexBuffer();
+                        auto* bufferGL = (cocos2d::backend::BufferGL*)buffer;
+                        V3F_C4B_T2F* vertex = (V3F_C4B_T2F*)bufferGL->getData();
+                        auto vertCount = buffer->getSize() / sizeof(V3F_C4B_T2F);
 						Color darkTmp;
-						for (int v = 0, vn = batchedTriangles->getTriangles().vertCount, vv = 0; v < vn; ++v, vv+=2, ++vertex) {
+						for (int v = 0, vn = vertCount, vv = 0; v < vn; ++v, vv+=2, ++vertex) {
 							Color lightCopy = color;
 							vertex->vertices.x = verts[vv];
 							vertex->vertices.y = verts[vv + 1];
@@ -471,24 +478,110 @@ namespace spine {
 							_effect->transform(vertex->vertices.x, vertex->vertices.y, vertex->texCoords.u, vertex->texCoords.v, lightCopy, darkTmp);
 							vertex->colors = ColorToColor4B(lightCopy);
 						}
+                        bufferGL->applyData();
 					} else {
-						V3F_C4B_T2F* vertex = batchedTriangles->getTriangles().verts;
-						for (int v = 0, vn = batchedTriangles->getTriangles().vertCount, vv = 0; v < vn; ++v, vv+=2, ++vertex) {
+                        auto* buffer = batchedTriangles->getVertexBuffer();
+                        auto* bufferGL = (cocos2d::backend::BufferGL*)buffer;
+                        V3F_C4B_T2F* vertex = (V3F_C4B_T2F*)bufferGL->getData();
+                        auto vertCount = buffer->getSize() / sizeof(V3F_C4B_T2F);
+						for (int v = 0, vn = vertCount, vv = 0; v < vn; ++v, vv+=2, ++vertex) {
 							vertex->vertices.x = verts[vv];
 							vertex->vertices.y = verts[vv + 1];
 							vertex->texCoords.u = uvs[vv];
 							vertex->texCoords.v = uvs[vv + 1];
 							vertex->colors = color4B;
 						}
+                        bufferGL->applyData();
 					}
+#else
+                    const float* verts = _clipper->getClippedVertices().buffer();
+                    const float* uvs = _clipper->getClippedUVs().buffer();
+                    if (_effect) {
+                        V3F_C4B_T2F* vertex = batchedTriangles->getTriangles().verts;
+                        Color darkTmp;
+                        for (int v = 0, vn = batchedTriangles->getTriangles().vertCount, vv = 0; v < vn; ++v, vv += 2, ++vertex) {
+                            Color lightCopy = color;
+                            vertex->vertices.x = verts[vv];
+                            vertex->vertices.y = verts[vv + 1];
+                            vertex->texCoords.u = uvs[vv];
+                            vertex->texCoords.v = uvs[vv + 1];
+                            _effect->transform(vertex->vertices.x, vertex->vertices.y, vertex->texCoords.u, vertex->texCoords.v, lightCopy, darkTmp);
+                            vertex->colors = ColorToColor4B(lightCopy);
+                        }
+                    }
+                    else {
+                        V3F_C4B_T2F* vertex = batchedTriangles->getTriangles().verts;
+                        for (int v = 0, vn = batchedTriangles->getTriangles().vertCount, vv = 0; v < vn; ++v, vv += 2, ++vertex) {
+                            vertex->vertices.x = verts[vv];
+                            vertex->vertices.y = verts[vv + 1];
+                            vertex->texCoords.u = uvs[vv];
+                            vertex->texCoords.v = uvs[vv + 1];
+                            vertex->colors = color4B;
+                        }
+                    }
+#endif
 				} else {
 					// Not clipping
 #if COCOS2D_VERSION < 0x00040000
 					cocos2d::TrianglesCommand* batchedTriangles = batch->addCommand(renderer, _globalZOrder, attachmentVertices->_texture, _glProgramState, blendFunc, triangles, transform, transformFlags);
 #else
-					cocos2d::TrianglesCommand* batchedTriangles = batch->addCommand(renderer, _globalZOrder, attachmentVertices->_texture, blendFunc, triangles, transform, transformFlags);
+                    Mat4 trans = transform;
+#if SPINE_RELOAD_VERTEX //override triangels
+
+                    std::vector< V3F_C4B_T2F> cdata;
+                    cdata.resize(4);
+                    const float RADIUS = 0.3f;
+                    const float textcoord = 1.0f;
+                    V3F_C4B_T2F bl = { {-RADIUS, -RADIUS, 0}, {255, 255, 0, 255}, {0.0, 0.0} };
+                    V3F_C4B_T2F br = { {RADIUS, -RADIUS, 0}, {255, 0, 0, 255}, {textcoord, 0.0} };
+                    V3F_C4B_T2F tl = { {-RADIUS, RADIUS, 0}, {0, 255, 0, 255}, {0.0, textcoord} };
+                    V3F_C4B_T2F tr = { {RADIUS, RADIUS, 0}, {0, 0, 255, 255}, {textcoord, textcoord} };
+                    cdata[0] = bl;
+                    cdata[1] = br;
+                    cdata[2] = tl;
+                    cdata[3] = tr;
+                    std::vector<uint16_t> indices = { 0, 1, 2, 1, 3, 2 };
+                    triangles.verts = cdata.data();
+                    triangles.vertCount = cdata.size();
+                    triangles.indices = indices.data();
+                    triangles.indexCount = indices.size();
+
+                    trans = Mat4::IDENTITY;
 #endif
 
+					SkeletonBatch::BatchCommand* batchedTriangles = batch->addCommand(renderer, _globalZOrder, attachmentVertices->_texture, blendFunc, triangles, trans, transformFlags);
+#endif
+
+#if SPINE_USE_CUSTOM_COMMAND
+
+                    if (_effect) {
+                        auto* buffer = batchedTriangles->getVertexBuffer();
+                        auto* bufferGL = (cocos2d::backend::BufferGL*)buffer;
+                        V3F_C4B_T2F* vertex =(V3F_C4B_T2F *) bufferGL->getData();
+                        auto vertCount = buffer->getSize() / sizeof(V3F_C4B_T2F);
+                        Color darkTmp;
+                        for (int v = 0, vn = vertCount; v < vn; ++v, ++vertex) {
+                            Color lightCopy = color;
+                            _effect->transform(vertex->vertices.x, vertex->vertices.y, vertex->texCoords.u, vertex->texCoords.v, lightCopy, darkTmp);
+                            vertex->colors = ColorToColor4B(lightCopy);
+                        }
+#if ! SPINE_RELOAD_VERTEX
+                        bufferGL->applyData();
+#endif
+                    }
+                    else {
+                        auto* buffer = batchedTriangles->getVertexBuffer();
+                        auto* bufferGL = (cocos2d::backend::BufferGL*)buffer;
+                        V3F_C4B_T2F* vertex = (V3F_C4B_T2F*)bufferGL->getData();
+                        auto vertCount = buffer->getSize() / sizeof(V3F_C4B_T2F);
+                        for (int v = 0, vn = vertCount; v < vn; ++v, ++vertex) {
+                            vertex->colors = color4B;
+                        }
+#if ! SPINE_RELOAD_VERTEX
+                        bufferGL->applyData();
+#endif
+                    }
+#else
 					if (_effect) {
 						V3F_C4B_T2F* vertex = batchedTriangles->getTriangles().verts;
 						Color darkTmp;
@@ -503,6 +596,7 @@ namespace spine {
 							vertex->colors = color4B;
 						}
 					}
+#endif
 				}
 			} else {
 				// Two tints
@@ -810,7 +904,7 @@ namespace spine {
 	}
 
 	void SkeletonRenderer::setTwoColorTint(bool enabled) {
-#if COCOS2D_VERSION > 0x00040000
+#if COCOS2D_VERSION >= 0x00040000
 		_twoColorTint = enabled;
 #endif
 		setupGLProgramState(enabled);
